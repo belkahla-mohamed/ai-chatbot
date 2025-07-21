@@ -4,7 +4,6 @@ const Chat = require('../models/Chat');
 
 let conn = null;
 
-// Connect to MongoDB only once (important for serverless functions)
 async function connectToDatabase() {
     if (conn) return conn;
     if (!process.env.MONGODB_URI) {
@@ -19,6 +18,7 @@ module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
@@ -27,7 +27,20 @@ module.exports = async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { userId, question } = req.body;
+    // 🔧 Parse raw JSON body
+    let body = '';
+    for await (const chunk of req) {
+        body += chunk;
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(body);
+    } catch (err) {
+        return res.status(400).json({ error: 'Invalid JSON' });
+    }
+
+    const { userId, question } = parsed;
 
     if (!userId || !question) {
         return res.status(400).json({ error: 'Missing userId or question' });
@@ -39,11 +52,11 @@ module.exports = async function handler(req, res) {
 
     try {
         await connectToDatabase();
-        // Call OpenAI API
+
         const openaiResponse = await axios.post(
             'https://api.openai.com/v1/chat/completions',
             {
-                model: 'gpt-4o-mini', // or 'gpt-4o'
+                model: 'gpt-4o-mini',
                 messages: [{ role: 'user', content: question }]
             },
             {
@@ -60,10 +73,8 @@ module.exports = async function handler(req, res) {
             throw new Error('No answer returned from OpenAI API');
         }
 
-        // Save to MongoDB
         await Chat.create({ userId, question, answer });
 
-        // Send response
         res.status(200).json({ answer });
     } catch (err) {
         const errorMsg = err.response?.data || err.message || 'Unknown error';
@@ -71,4 +82,3 @@ module.exports = async function handler(req, res) {
         res.status(500).json({ error: errorMsg });
     }
 };
-
